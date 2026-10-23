@@ -1,0 +1,45 @@
+# What to look for. Edit freely; changes take effect on the next run.
+
+topic: >
+  Effects of generative AI (LLMs, ChatGPT, Copilot, AI assistants) on organisations,
+  firms, workers, teams or management: productivity, performance, labour demand,
+  wages, skills, innovation, organisational structure or decision-making.
+
+# Keep only papers whose identification strategy is one of these.
+causal_designs:
+  - RCT / field experiment
+  - lab or online experiment
+  - natural experiment
+  - difference-in-differences / event study
+  - instrumental variables
+  - regression discontinuity
+  - synthetic control
+  - other quasi-experimental
+
+# Search queries. Each runs against OpenAlex and arXiv.
+queries:
+  - generative AI productivity experiment
+  - large language model workers field experiment
+  - ChatGPT firms difference-in-differences
+  - generative AI labor market causal
+  - AI assistant employees randomized
+  - LLM adoption organizations natural experiment
+  - GitHub Copilot developers productivity
+  - generative AI exposure occupations employment
+
+arxiv_categories: [econ.GN, cs.CY, cs.HC, cs.SE]
+
+# How far back each run looks. 14 days on a weekly schedule gives some overlap,
+# which catches papers that are indexed a few days late. Duplicates are skipped.
+lookback_days: 14
+max_results_per_query: 50
+
+# Minimum relevance score (0-3) for a paper to enter the database.
+min_relevance: 2
+
+# CBS Library EZproxy. A proxied link sends you through your CBS login.
+# If links fail, check the current prefix on the CBS Library website.
+proxy_prefix: "https://esc-web.lib.cbs.dk:8443/login?url="
+
+# Claude model used for screening. Haiku is cheap and fast enough for abstracts.
+model: claude-haiku-5-5
