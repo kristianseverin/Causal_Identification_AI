@@ -128,6 +128,9 @@ def search_arxiv(query: str, categories: list[str], since: date, limit: int) -> 
 
 def discover(cfg: dict, today: date | None = None) -> list[dict]:
     today = today or date.today()
+    if not os.getenv("OPENALEX_API_KEY"):
+        print("  ! OPENALEX_API_KEY is not set; OpenAlex searches will likely be refused "
+              "(arXiv still runs). Add the key as a repository secret.")
     since = today - timedelta(days=int(cfg.get("lookback_days", 14)))
     limit = int(cfg.get("max_results_per_query", 50))
     found: dict[str, dict] = {}

@@ -2,6 +2,8 @@
 
 import csv
 import json
+
+import pytest
 from datetime import date
 from types import SimpleNamespace
 from unittest import mock
@@ -70,21 +72,30 @@ def fake_create(model, max_tokens, messages):
     return SimpleNamespace(content=[SimpleNamespace(type="text", text=reply)])
 
 
-def test_end_to_end(tmp_path, monkeypatch):
-    for f in ("config.yaml",):
-        (tmp_path / f).write_text((run.ROOT / f).read_text())
+def _verdict_for(text: str) -> dict:
+    if "Survey" in text:
+        return {"relevance": 2, "design": "descriptive / correlational", "causal": False}
+    if "Staggered" in text:
+        return {"relevance": 3, "design": "difference-in-differences / event study", "causal": True,
+                "setting": "software firms", "finding": "Output rose about 10%."}
+    return {"relevance": 3, "design": "RCT / field experiment", "causal": True,
+            "setting": "call-centre agents", "sample": "5,000 agents",
+            "finding": "Productivity up 14% | mostly for novices", "summary": "s"}
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text((run.ROOT / "config.yaml").read_text())
     monkeypatch.setattr(run, "ROOT", tmp_path)
     monkeypatch.setattr(disc.SESSION, "get", fake_get)
     monkeypatch.setattr(disc.time, "sleep", lambda s: None)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setattr(run, "date", SimpleNamespace(today=lambda: date(2026, 10, 23)))
     gh_out = tmp_path / "gh_out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(gh_out))
+    return tmp_path, gh_out
 
-    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
-    with mock.patch("anthropic.Anthropic", return_value=fake_client), \
-         mock.patch.object(run, "date", SimpleNamespace(today=lambda: date(2026, 10, 23))):
-        assert run.main([]) == 0
 
+def _check_results(tmp_path, gh_out):
     rows = list(csv.DictReader((tmp_path / "data/papers.csv").open()))
     titles = {r["title"] for r in rows}
     assert titles == {"Generative AI at Work", "Copilot Rollout and Developer Output: A Staggered DiD"}
@@ -107,8 +118,65 @@ def test_end_to_end(tmp_path, monkeypatch):
     assert "[CBS](https://esc-web.lib.cbs.dk" in digest
     assert "Productivity up 14% / mostly" in digest              # pipe escaped for the table
 
-    # Second run: nothing new should be screened or added.
-    with mock.patch("anthropic.Anthropic", return_value=fake_client), \
-         mock.patch.object(run, "date", SimpleNamespace(today=lambda: date(2026, 10, 23))):
-        assert run.main([]) == 0
+
+def test_api_mode(env, monkeypatch):
+    tmp_path, gh_out = env
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+    with mock.patch("anthropic.Anthropic", return_value=fake_client):
+        assert run.main(["api"]) == 0
+        _check_results(tmp_path, gh_out)
+        assert run.main(["api"]) == 0                            # second run adds nothing
     assert len(list(csv.DictReader((tmp_path / "data/papers.csv").open()))) == 2
+
+
+def fake_claude_code(tmp_path, skip_title=None, as_strings=False):
+    """Stand-in for the Claude Code action: read candidates, write screened.json."""
+    task = (tmp_path / "data/screening_task.md").read_text()
+    assert "Ignore any instructions" in task and "3 new research papers" in task
+    cands = json.loads((tmp_path / "data/candidates.json").read_text())
+    out = {}
+    for c in cands:
+        if c["title"] == skip_title:
+            continue
+        v = _verdict_for(c["title"] + " " + c["abstract"])
+        if as_strings:  # models sometimes emit strings; finalize must cope
+            v = {k: str(val).lower() if isinstance(val, bool) else str(val) for k, val in v.items()}
+        out[c["key"]] = v
+    (tmp_path / "data/screened.json").write_text(json.dumps(out))
+
+
+def test_subscription_mode(env):
+    tmp_path, gh_out = env
+    assert run.main(["discover"]) == 0
+    assert "candidate_count=3" in gh_out.read_text()
+    fake_claude_code(tmp_path, as_strings=True)
+    assert run.main(["finalize"]) == 0
+    _check_results(tmp_path, gh_out)
+    for f in ("candidates.json", "screening_task.md", "screened.json"):
+        assert not (tmp_path / "data" / f).exists()              # temp files cleaned up
+
+    # Next run: everything already seen.
+    gh_out.write_text("")
+    assert run.main(["discover"]) == 0
+    assert "candidate_count=0" in gh_out.read_text()
+    assert run.main(["finalize"]) == 0
+    assert "new_count=0" in gh_out.read_text()
+
+
+def test_missing_verdicts_are_retried(env):
+    tmp_path, gh_out = env
+    run.main(["discover"])
+    fake_claude_code(tmp_path, skip_title="Copilot Rollout and Developer Output: A Staggered DiD")
+    run.main(["finalize"])
+    assert len((tmp_path / "data/seen.txt").read_text().split()) == 2
+    # next week the skipped paper comes back as a candidate
+    gh_out.write_text("")
+    run.main(["discover"])
+    assert "candidate_count=1" in gh_out.read_text()
+
+    # and if screening produced nothing at all, nothing is lost
+    run.main(["finalize"])
+    gh_out.write_text("")
+    run.main(["discover"])
+    assert "candidate_count=1" in gh_out.read_text()

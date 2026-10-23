@@ -41,5 +41,10 @@ min_relevance: 2
 # If links fail, check the current prefix on the CBS Library website.
 proxy_prefix: "https://esc-web.lib.cbs.dk:8443/login?url="
 
-# Claude model used for screening. Haiku is cheap and fast enough for abstracts.
+# Upper limit on papers screened per run; extras wait for the next run.
+# Keeps each weekly run small so it uses little of your subscription's allowance.
+max_screen_per_run: 150
+
+# Claude model used for screening in API mode (`python -m tracker.run api`).
+# The GitHub workflow sets its model in .github/workflows/weekly.yml instead.
 model: claude-haiku-5-5

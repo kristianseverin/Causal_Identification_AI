@@ -8,10 +8,12 @@ on:
 permissions:
   contents: write
   issues: write
+  id-token: write
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -22,13 +24,34 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Discover and screen
-        id: tracker
+      # 1. Search OpenAlex and arXiv; write data/candidates.json + data/screening_task.md
+      - name: Find new papers
+        id: discover
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
-        run: python -m tracker.run
+        run: python -m tracker.run discover
+
+      # 2. Claude screens them with your Claude subscription (no API key).
+      #    It may only read and write files; no shell, no web, no GitHub access.
+      - name: Screen with Claude
+        if: steps.discover.outputs.candidate_count != '0'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: >-
+            Follow the instructions in data/screening_task.md.
+            Read data/candidates.json and write data/screened.json.
+          claude_args: |
+            --model haiku
+            --max-turns 20
+            --allowedTools "Read,Write"
+
+      # 3. Store accepted papers, write the digest, clean up
+      - name: Save results
+        id: finalize
+        run: python -m tracker.run finalize
 
       - name: Commit results
         run: |
@@ -39,10 +62,10 @@ jobs:
           git push
 
       - name: Open digest issue
-        if: steps.tracker.outputs.new_count != '0'
+        if: steps.finalize.outputs.new_count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue create \
-            --title "New GenAI causal papers: ${{ steps.tracker.outputs.new_count }} ($(date -u +%F))" \
-            --body-file "${{ steps.tracker.outputs.digest }}"
+            --title "New GenAI causal papers: ${{ steps.finalize.outputs.new_count }} ($(date -u +%F))" \
+            --body-file "${{ steps.finalize.outputs.digest }}"

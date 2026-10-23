@@ -17,22 +17,53 @@ No PDFs are downloaded. Each paper gets up to three links:
 The repo stores only metadata, links and Claude's own one-line summaries, never
 publishers' abstracts, so it can be public or private.
 
-## Setup (about 10 minutes)
+## How a run works
+
+1. `python -m tracker.run discover` searches and writes the new candidates to
+   `data/candidates.json`, with instructions in `data/screening_task.md`.
+2. The Claude Code GitHub Action screens them **using your Claude subscription**
+   (no API key, no separate billing) and writes `data/screened.json`. It is only allowed
+   to read and write files: no shell, no web, no GitHub access.
+3. `python -m tracker.run finalize` stores the accepted papers, writes the digest and
+   deletes the temporary files.
+
+Each run screens at most `max_screen_per_run` papers (150) with Claude Haiku, so it uses
+a small share of your subscription's usage limits.
+
+## Setup (about 15 minutes)
 
 1. **Create the repo.** Make a new GitHub repository and push these files to it.
-2. **Add secrets.** In the repo: *Settings → Secrets and variables → Actions → New repository secret*.
-   - `ANTHROPIC_API_KEY` (required): from console.anthropic.com. Screening uses Claude Haiku
-     with one short call per new abstract, so a weekly run is cheap; check current pricing
-     on the Anthropic site.
-   - `CONTACT_EMAIL` (recommended): sent to OpenAlex so you get its faster "polite pool".
-   - `OPENALEX_API_KEY` (optional): only needed if OpenAlex requires a key for your usage.
-3. **Allow the workflow to write.** *Settings → Actions → General → Workflow permissions*:
+2. **Get a subscription token** (on a computer where you can install Claude Code):
+   - Install Claude Code. Windows PowerShell: `irm https://claude.ai/install.ps1 | iex`
+     · macOS/Linux: `curl -fsSL https://claude.ai/install.sh | bash`
+   - Open a **new** terminal and run `claude setup-token`. Approve in the browser that opens
+     (log in with the Claude account that has your paid plan).
+   - The token is printed in the terminal. Copy it now; it isn't saved anywhere.
+     It is valid for one year (see *Renewing the token*).
+3. **Add secrets.** In the repo: *Settings → Secrets and variables → Actions → New repository secret*.
+   - `CLAUDE_CODE_OAUTH_TOKEN` (required): the token from step 2.
+   - `OPENALEX_API_KEY` (required): free key from openalex.org. Since early 2026 OpenAlex
+     needs a key for search calls; the free daily allowance is far more than the
+     8 searches this makes per week.
+   - `CONTACT_EMAIL` (optional): your email, sent to OpenAlex as a courtesy contact.
+4. **Allow the workflow to write.** *Settings → Actions → General → Workflow permissions*:
    choose "Read and write permissions".
-4. **Turn on issue notifications.** Click *Watch* on the repo (Custom → Issues) to get the
+5. **Turn on issue notifications.** Click *Watch* on the repo (Custom → Issues) to get the
    digest by email.
-5. **Run it once.** *Actions → Weekly literature check → Run workflow*. The first run
-   looks back `lookback_days` (14). For a one-off backfill, set it higher (e.g. 365) in
-   `config.yaml`, run once, then set it back.
+6. **Run it once.** *Actions → Weekly literature check → Run workflow*. The first run
+   looks back `lookback_days` (14). For a backfill, set it higher (e.g. 365) in
+   `config.yaml` and run it a few times: each run screens up to 150 papers and the rest
+   wait for the next run. Then set it back to 14.
+
+If the "Screen with Claude" step fails with a message about the Claude GitHub App,
+install the app on the repo from github.com/apps/claude and run again.
+
+## Renewing the token
+
+The subscription token lasts one year. When it expires, the "Screen with Claude" step
+fails with an authentication error. Run `claude setup-token` again and replace the
+`CLAUDE_CODE_OAUTH_TOKEN` secret. Nothing is lost: unscreened papers are retried on the
+next run.
 
 ## Test the CBS link
 
@@ -58,9 +89,12 @@ Delete a line there to have a paper re-screened.
 
 ```bash
 pip install -r requirements.txt
-python -m tracker.run --dry-run         # just list what the searches find
-ANTHROPIC_API_KEY=sk-... python -m tracker.run
+export OPENALEX_API_KEY=...
+python -m tracker.run dry-run           # just list what the searches find
 ```
+
+If you ever get a Claude API key, `python -m tracker.run api` does the whole run
+locally (search, screen, store) without Claude Code.
 
 ## Coverage notes
 
